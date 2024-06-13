@@ -29,14 +29,32 @@ def generate_data(n_samples):
             - this plot should contain a 2d histogram of the generated data samples
 
     """
+    # n_samples = 10
     x, mu, sig, a = torch.zeros((n_samples,2)), None, None, None
     fig1 = plt.figure(figsize=(5,5))
     plt.title('Data samples')
 
     """ Start of your code
     """
+    K = 3
+    a = np.array([1/3, 1/3, 1/3])
+    mu = np.array([[1,1], [3,1], [2,3]]) # this is not mu, because apparently mu has already been defined (line 32)
+    mu = mu/4
+    sig = np.array([0.01*np.eye(2) for k in range(K)])
+    to_sample = np.array(np.floor(n_samples*a), dtype=np.int32)
+    to_sample[-1] = n_samples - np.sum(to_sample[:-1])
 
-    
+    L = np.linalg.cholesky(sig[0] + 1e-6 * np.eye(sig[0].shape[0])) # we can use the same decomposition for sampling because all components have the same covariance
+    idx = 0
+    x_np = np.zeros((n_samples, 2))
+    for k in range(K):
+        z = np.random.normal(size=(to_sample[k], mu[0].shape[0], 1))
+        x_np[idx:idx + to_sample[k]] = mu[k] + np.matmul(L, z).reshape(to_sample[k], mu[0].shape[0])
+        idx += to_sample[k]
+
+    x = torch.from_numpy(x_np)
+    plt.hist2d(x_np[:,0], x_np[:,1], bins=128, cmap='viridis') # maybe it should be bins=32
+    plt.colorbar()  # Add a colorbar to a plot
 
     """ End of your code
     """
