@@ -105,9 +105,89 @@ def dsm(x, params):
 
     """ Start of your code
     """
-    noiselevels = [0,0,0] # TODO: replace these with the chosen noise levels for plotting the density/scores
+    n_samples = x.shape[0]
+    space_dimension = x.shape[1]
+    sigma_1 = 0.01
+    sigma_L = 0.5
+    L = 5
+    noiselevels = [0,sigma_1,sigma_L] # DONE: replace these with the chosen noise levels for plotting the density/scores
     Net = None # TODO: replace with torch.nn module
-    sigmas_all = None # TODO: replace with the L noise levels
+    sigmas_all = get_sigmas(sigma_1, sigma_L, L) # DONE: replace with the L noise levels
+    print(sigmas_all)
+
+    # TASK 3.1
+    x_bar = torch.zeros((L, n_samples, space_dimension))
+    for l in range(L):
+        z = np.random.normal(size=(n_samples, space_dimension))
+        x_bar[l] = x + sigmas_all[l]*z
+    ax2[1].hist2d(x_bar[0].cpu().numpy()[:,0],x_bar[0].cpu().numpy()[:,1],128)
+    ax2[2].hist2d(x_bar[-1].cpu().numpy()[:,0],x_bar[-1].cpu().numpy()[:,1],128)
+    print(x_bar.shape)
+
+    # TASK 3.2
+
+    class SimpleMLP(nn.Module):
+        def __init__(self, input_size, hidden_size, output_size):
+            super().__init__()
+            self.W1 = nn.Linear(input_size, hidden_size, bias=True) 
+            self.W2 = nn.Linear(hidden_size, hidden_size, bias=True)
+            self.W3 = nn.Linear(hidden_size, output_size, bias=True)
+
+        def forward(self, ipt):
+            tmp = F.elu(self.W1(ipt))
+            tmp = F.elu(self.W2(tmp))
+            return self.W3(tmp)
+
+    def count_parameters(net):
+        return sum(p.numel() for p in net.parameters() if p.requires_grad)
+
+    classifier_net = SimpleMLP(input_size=3,hidden_size=64,output_size=1).to("cpu")
+    print('Learnable params=%i' %count_parameters(classifier_net))
+
+    # TASK 3.3
+
+    # Repeat sigma to match the size of x_bar
+    sigma_expanded = sigmas_all.view(L, 1, 1).expand(-1, n_samples, 1)
+    # Concatenate x_bar and sigma_expanded along the last dimension
+    x_bar_reshaped = torch.cat((x_bar, sigma_expanded), dim=2)
+    # Reshape x_fin to have shape [50000, 3]
+    x_bar_reshaped = x_bar_reshaped.view(-1, space_dimension+1)
+    print(x_bar_reshaped.shape)  # This should print torch.Size([50000, 3])
+
+    class DSMLoss(torch.nn.Module):
+        def __init__(self):
+            super(DSMLoss, self).__init__()
+
+        def forward(self, x_bar, x_original, sigma, predictions):
+            # Calculate the analytical gradient of the log probability
+            analytical_grad = (x_bar - x_original) / sigma**2
+            # Calculate the loss
+            loss = torch.mean(sigma**2 * torch.sum((predictions + analytical_grad) ** 2, dim=1))
+            return loss
+
+    # Usage:
+    # Assuming `predictions` are outputs from your model and other tensors are prepared
+    
+    
+
+    n_epochs = 200
+    optimizer = optim.Adam(classifier_net.parameters(), lr=.01)
+    # criterion = nn.MSELoss()
+    # loss_function = DSMLoss()
+    loss_all = []
+
+    # for epoch in range(n_epochs):s
+    #     running_loss = 0.0
+    #     for it in range(n_samples):
+    #         sigma = sigmas_all[np.random.randint(0, L)]
+    #         predictions = classifier_net.forward(x_bar_reshaped)
+    #         loss = loss = loss_function(x_bar, x_original, sigmas_all, predictions)
+    #         # TODO: continue here
+
+    # TASK 3.4
+
+
+
 
 
     """ End of your code
