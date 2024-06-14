@@ -17,6 +17,8 @@ import torch.optim as optim
 
 from matplotlib.backends.backend_pdf import PdfPages
 
+import tqdm
+
 def get_sigmas(sigma_1, sigma_L, L):
     # geometric progression for noise levels from \sigma_1 to \sigma_L 
     return torch.tensor(np.exp(np.linspace(np.log(sigma_1),np.log(sigma_L), L)))
@@ -110,7 +112,7 @@ def dsm(x, params):
     sigma_1 = 0.01
     sigma_L = 0.5
     L = 5
-    noiselevels = [0,sigma_1,sigma_L] # DONE: replace these with the chosen noise levels for plotting the density/scores
+
     Net = None # TODO: replace with torch.nn module
     sigmas_all = get_sigmas(sigma_1, sigma_L, L) # DONE: replace with the L noise levels
     print(sigmas_all)
@@ -121,7 +123,11 @@ def dsm(x, params):
         z = np.random.normal(size=(n_samples, space_dimension))
         x_bar[l] = x + sigmas_all[l]*z
     ax2[1].hist2d(x_bar[0].cpu().numpy()[:,0],x_bar[0].cpu().numpy()[:,1],128)
+    xlim1 = ax2[1].get_xlim()
+    ylim1 = ax2[1].get_ylim()
     ax2[2].hist2d(x_bar[-1].cpu().numpy()[:,0],x_bar[-1].cpu().numpy()[:,1],128)
+    # ax2[2].set_xlim(xlim1)
+    # ax2[2].set_ylim(ylim1)
     print(x_bar.shape)
 
     # TASK 3.2
@@ -151,43 +157,148 @@ def dsm(x, params):
     # Concatenate x_bar and sigma_expanded along the last dimension
     x_bar_reshaped = torch.cat((x_bar, sigma_expanded), dim=2)
     # Reshape x_fin to have shape [50000, 3]
-    x_bar_reshaped = x_bar_reshaped.view(-1, space_dimension+1)
+    x_bar_reshaped = x_bar_reshaped.view(-1, space_dimension+1).float()
+    # x_bar_reshaped.requires_grad_(True)
     print(x_bar_reshaped.shape)  # This should print torch.Size([50000, 3])
 
     class DSMLoss(torch.nn.Module):
         def __init__(self):
             super(DSMLoss, self).__init__()
 
-        def forward(self, x_bar, x_original, sigma, predictions):
+        def forward(self, x_bar, x_original, sigma, gradients):
             # Calculate the analytical gradient of the log probability
             analytical_grad = (x_bar - x_original) / sigma**2
             # Calculate the loss
-            loss = torch.mean(sigma**2 * torch.sum((predictions + analytical_grad) ** 2, dim=1))
+            loss = torch.mean(sigma**2 * torch.sum((gradients - analytical_grad) ** 2, dim=1))
             return loss
 
     # Usage:
     # Assuming `predictions` are outputs from your model and other tensors are prepared
     
+    def noisy_shape(noisy_input, noise_value):
+        auxN, auxM = noisy_input.shape  # Get the shape of the input tensor
+        sigma_col = torch.full((auxN, 1), noise_value)  # Create a column tensor filled with the value s
+        z = torch.cat((noisy_input, sigma_col), dim=1)  # Concatenate x with the sigma column
+        return z
     
+    def print_parameters(net, msg="Parameters"):
+        print(msg)
+        for name, param in net.named_parameters():
+            if "W1" in name: 
+                if param.requires_grad:
+                    print(name, param.data)
 
-    n_epochs = 200
-    optimizer = optim.Adam(classifier_net.parameters(), lr=.01)
+    n_epochs = 100
+    optimizer = optim.Adam(classifier_net.parameters(), lr=.001)
     # criterion = nn.MSELoss()
-    # loss_function = DSMLoss()
+    loss_function = DSMLoss()
     loss_all = []
 
-    # for epoch in range(n_epochs):s
-    #     running_loss = 0.0
-    #     for it in range(n_samples):
-    #         sigma = sigmas_all[np.random.randint(0, L)]
-    #         predictions = classifier_net.forward(x_bar_reshaped)
-    #         loss = loss = loss_function(x_bar, x_original, sigmas_all, predictions)
-    #         # TODO: continue here
+    # print_parameters(classifier_net)
+
+    for epoch in tqdm.tqdm(range(n_epochs)):
+        running_loss = 0.0
+        for l in np.random.permutation(range(L)):
+            sigma = sigmas_all[l]
+            z = np.random.normal(size=(n_samples, space_dimension))
+            noisy_input = (x + sigma*z).float()
+            noisy_input.requires_grad_(True)
+            noisy_input_reshaped = noisy_shape(noisy_input,sigma)
+            
+            predictions = classifier_net.forward(noisy_input_reshaped)
+            grad_outputs = torch.ones_like(predictions)
+            gradients = torch.autograd.grad(predictions, noisy_input_reshaped, grad_outputs, create_graph=True)[0][:,:-1]
+            # print(gradients)
+            # print(gradients.shape)
+            loss = loss_function(noisy_input, x, sigma, gradients)
+            optimizer.zero_grad()
+            loss.backward(retain_graph=True)
+            # print("Gradient of first layer weights after backward: ", classifier_net.W1.weight.grad)
+            optimizer.step()
+            running_loss += loss.item()
+        loss_all.append(running_loss)
+
+    # print_parameters(classifier_net)
+
+    ax3.plot(np.asarray(loss_all)) # TODO: maybe, plot log loss instead of loss
 
     # TASK 3.4
+    
+    # Define the Gaussian Mixture Model PDF function
+    def gmm_pdf(mu, sigma, pi, x):
+        res = 0.0
+        for i in range(len(mu)):
+            res += pi[i] * (1/(2 * np.pi * np.sqrt(sigma))) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * sigma))
+        return res
+
+    xlim1 = np.array(ax2[1].get_xlim())
+    ylim1 = np.array(ax2[1].get_ylim())
+
+    xlimL = np.array(ax2[2].get_xlim())
+    ylimL = np.array(ax2[2].get_ylim())
+
+    xlims = [xlim1, (xlim1 + xlimL)/2, xlimL]
+    ylims = [ylim1, (ylim1 + ylimL)/2, ylimL]
+    xticks = [np.linspace(lim[0], lim[1], num=5) for lim in xlims]
+    yticks = [np.linspace(lim[0], lim[1], num=5) for lim in ylims]
+    noiselevels = [sigma_1,sigmas_all[int(L/2)],sigma_L] # DONE: replace these with the chosen noise levels for plotting the density/scores
+    arrowscales = [60,15,5]
+
+    for nl in range(3):
+
+        x1 = np.linspace(xlims[nl][0], xlims[nl][1], num=32)
+        y1 = np.linspace(ylims[nl][0], ylims[nl][1], num=32)
+
+        X, Y = np.meshgrid(x1, y1)
+        Z = np.zeros_like(X)
+
+        # Calculate the GMM PDF for each point in the meshgrid
+        for i in range(X.shape[0]):
+            for j in range(X.shape[1]):
+                Z[i, j] = gmm_pdf(mu, 0.01 + noiselevels[nl], a, np.array([X[i, j], Y[i, j]]))
+        
+        ax4[0,nl].contourf(X, Y, Z, levels=50, cmap='viridis')
+        ax4[0, nl].set_xticks(xticks[nl]) # TODO: for some reason, the ticks are not working
+        ax4[0, nl].set_yticks(yticks[nl])
+        ax4[0, nl].set_xlim(xlims[nl])
+        ax4[0, nl].set_ylim(ylims[nl])
+
+        # Compute gradients
+        Gx, Gy = np.gradient(Z, x1, y1)
+        magnitude = np.hypot(Gx, Gy)
+        ax4[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=arrowscales[nl], cmap='viridis')
 
 
+   # TASK 3.5
+   # Energy_function
+    def energy_pdf(energy_net, sigma, x):
+        x_tens = torch.tensor([x[0], x[1], sigma]).float()
+        res = energy_net.forward(x_tens)
+        return res
 
+    for nl in range(3):
+
+        x1 = np.linspace(xlims[nl][0], xlims[nl][1], num=32)
+        y1 = np.linspace(ylims[nl][0], ylims[nl][1], num=32)
+
+        X, Y = np.meshgrid(x1, y1)
+        Z = np.zeros_like(X)
+
+        # Calculate the GMM PDF for each point in the meshgrid
+        for i in range(X.shape[0]):
+            for j in range(X.shape[1]):
+                Z[i, j] = energy_pdf(classifier_net, noiselevels[nl], np.array([X[i, j], Y[i, j]]))
+        
+        ax5[0,nl].contourf(X, Y, Z, levels=50, cmap='viridis')
+        ax5[0, nl].set_xticks(xticks[nl]) # TODO: for some reason, the ticks are not working
+        ax5[0, nl].set_yticks(yticks[nl])
+        ax5[0, nl].set_xlim(xlims[nl])
+        ax5[0, nl].set_ylim(ylims[nl])
+
+        # Compute gradients
+        Gx, Gy = np.gradient(Z, x1, y1)
+        magnitude = np.hypot(Gx, Gy)
+        ax5[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=arrowscales[nl], cmap='viridis')
 
 
     """ End of your code
