@@ -119,8 +119,8 @@ def dsm(x, params):
     n_samples = x.shape[0]
     space_dimension = x.shape[1]
     sigma_1 = 0.01
-    sigma_L = 0.5
-    L = 10
+    sigma_L = 0.4 # 0.3
+    L = 30
 
     Net = None # TODO: replace with torch.nn module
     sigmas_all = get_sigmas(sigma_1, sigma_L, L) # DONE: replace with the L noise levels
@@ -201,7 +201,7 @@ def dsm(x, params):
                 if param.requires_grad:
                     print(name, param.data)
 
-    n_epochs = 150
+    n_epochs = 85
     optimizer = optim.Adam(classifier_net.parameters(), lr=.001, weight_decay=1e-4)
 
     # criterion = nn.MSELoss()
