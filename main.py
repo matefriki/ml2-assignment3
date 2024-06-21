@@ -46,7 +46,8 @@ def generate_data(n_samples):
     to_sample = np.array(np.floor(n_samples*a), dtype=np.int32)
     to_sample[-1] = n_samples - np.sum(to_sample[:-1])
 
-    L = np.linalg.cholesky(sig[0] + 1e-6 * np.eye(sig[0].shape[0])) # we can use the same decomposition for sampling because all components have the same covariance
+    # we can use the same decomposition for sampling because all components have the same covariance
+    L = np.linalg.cholesky(sig[0] + 1e-6 * np.eye(sig[0].shape[0]))
     idx = 0
     x_np = np.zeros((n_samples, 2))
     for k in range(K):
@@ -55,7 +56,7 @@ def generate_data(n_samples):
         idx += to_sample[k]
 
     x = torch.from_numpy(x_np)
-    plt.hist2d(x_np[:,0], x_np[:,1], bins=128, cmap='viridis') # maybe it should be bins=32
+    plt.hist2d(x_np[:,0], x_np[:,1], bins=128, cmap='viridis')  # maybe it should be bins=32
     plt.colorbar()  # Add a colorbar to a plot
 
     """ End of your code
@@ -90,7 +91,7 @@ def dsm(x, params):
             - ax5[1,1] contains the learned scores for the data samples perturbed with an intermediate \sigma_i 
             - ax5[1,2] contains the learned scores for the data samples perturbed with \sigma_L
     """
-    
+
     fig2, ax2 = plt.subplots(1,3,figsize=(10,3))
     ax2[0].hist2d(x.cpu().numpy()[:,0],x.cpu().numpy()[:,1],128), ax2[0].set_title(r'data $x$')
     ax2[1].set_title(r'data $x$ with $\sigma_{1}$')
@@ -111,7 +112,7 @@ def dsm(x, params):
     space_dimension = x.shape[1]
     sigma_1 = 0.01
     sigma_L = 0.5
-    L = 5
+    L = 10
 
     Net = None # TODO: replace with torch.nn module
     sigmas_all = get_sigmas(sigma_1, sigma_L, L) # DONE: replace with the L noise levels
@@ -135,19 +136,23 @@ def dsm(x, params):
     class SimpleMLP(nn.Module):
         def __init__(self, input_size, hidden_size, output_size):
             super().__init__()
-            self.W1 = nn.Linear(input_size, hidden_size, bias=True) 
+            self.W1 = nn.Linear(input_size, hidden_size, bias=True)
             self.W2 = nn.Linear(hidden_size, hidden_size, bias=True)
-            self.W3 = nn.Linear(hidden_size, output_size, bias=True)
+            self.W3 = nn.Linear(hidden_size, hidden_size, bias=True)
+            self.W4 = nn.Linear(hidden_size, hidden_size, bias=True)
+            self.W5 = nn.Linear(hidden_size, output_size, bias=True)
 
         def forward(self, ipt):
             tmp = F.elu(self.W1(ipt))
             tmp = F.elu(self.W2(tmp))
-            return self.W3(tmp)
+            tmp = F.elu(self.W3(tmp))
+            tmp = F.elu(self.W4(tmp))
+            return self.W5(tmp)
 
     def count_parameters(net):
         return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
-    classifier_net = SimpleMLP(input_size=3,hidden_size=64,output_size=1).to("cpu")
+    classifier_net = SimpleMLP(input_size=3,hidden_size=128,output_size=1).to("cpu")
     print('Learnable params=%i' %count_parameters(classifier_net))
 
     # TASK 3.3
@@ -167,29 +172,30 @@ def dsm(x, params):
 
         def forward(self, x_bar, x_original, sigma, gradients):
             # Calculate the analytical gradient of the log probability
-            analytical_grad = (x_bar - x_original) / sigma**2
+            analytical_grad = -1 * (x_bar - x_original) / sigma**2
             # Calculate the loss
-            loss = torch.mean(sigma**2 * torch.sum((gradients - analytical_grad) ** 2, dim=1))
+            loss = torch.mean(sigma**2 * torch.sum((analytical_grad - gradients) ** 2, dim=1))
             return loss
 
     # Usage:
     # Assuming `predictions` are outputs from your model and other tensors are prepared
-    
+
     def noisy_shape(noisy_input, noise_value):
         auxN, auxM = noisy_input.shape  # Get the shape of the input tensor
         sigma_col = torch.full((auxN, 1), noise_value)  # Create a column tensor filled with the value s
         z = torch.cat((noisy_input, sigma_col), dim=1)  # Concatenate x with the sigma column
         return z
-    
+
     def print_parameters(net, msg="Parameters"):
         print(msg)
         for name, param in net.named_parameters():
-            if "W1" in name: 
+            if "W1" in name:
                 if param.requires_grad:
                     print(name, param.data)
 
-    n_epochs = 100
-    optimizer = optim.Adam(classifier_net.parameters(), lr=.001)
+    n_epochs = 150
+    optimizer = optim.Adam(classifier_net.parameters(), lr=.001, weight_decay=1e-4)
+
     # criterion = nn.MSELoss()
     loss_function = DSMLoss()
     loss_all = []
@@ -204,7 +210,7 @@ def dsm(x, params):
             noisy_input = (x + sigma*z).float()
             noisy_input.requires_grad_(True)
             noisy_input_reshaped = noisy_shape(noisy_input,sigma)
-            
+
             predictions = classifier_net.forward(noisy_input_reshaped)
             grad_outputs = torch.ones_like(predictions)
             gradients = torch.autograd.grad(predictions, noisy_input_reshaped, grad_outputs, create_graph=True)[0][:,:-1]
@@ -223,7 +229,7 @@ def dsm(x, params):
     ax3.plot(np.asarray(loss_all)) # TODO: maybe, plot log loss instead of loss
 
     # TASK 3.4
-    
+
     # Define the Gaussian Mixture Model PDF function
     def gmm_pdf(mu, sigma, pi, x):
         res = 0.0
@@ -256,7 +262,7 @@ def dsm(x, params):
         for i in range(X.shape[0]):
             for j in range(X.shape[1]):
                 Z[i, j] = gmm_pdf(mu, 0.01 + noiselevels[nl], a, np.array([X[i, j], Y[i, j]]))
-        
+
         ax4[0,nl].contourf(X, Y, Z, levels=50, cmap='viridis')
         ax4[0, nl].set_xticks(xticks[nl]) # TODO: for some reason, the ticks are not working
         ax4[0, nl].set_yticks(yticks[nl])
@@ -288,7 +294,7 @@ def dsm(x, params):
         for i in range(X.shape[0]):
             for j in range(X.shape[1]):
                 Z[i, j] = energy_pdf(classifier_net, noiselevels[nl], np.array([X[i, j], Y[i, j]]))
-        
+
         ax5[0,nl].contourf(X, Y, Z, levels=50, cmap='viridis')
         ax5[0, nl].set_xticks(xticks[nl]) # TODO: for some reason, the ticks are not working
         ax5[0, nl].set_yticks(yticks[nl])
@@ -327,20 +333,20 @@ def sampling(Net, sigmas_all, n_samples):
                 - ax6[1] contains the histogram of the generated samples
     
     """
-    
+
     fig6, ax6 = plt.subplots(1,2,figsize=(11,5),sharex=True,sharey=True)
     ax6[0].set_title(r'data $x$')
     ax6[1].set_title(r'samples')
 
     """ Start of your code
     """
-   
-        
+
+
 
     """ End of your code
     """
 
-    return fig6 
+    return fig6
 
 if __name__ == '__main__':
     pdf = PdfPages('figures.pdf')
@@ -360,4 +366,4 @@ if __name__ == '__main__':
     pdf.savefig(fig6)
 
     pdf.close()
-    
+
