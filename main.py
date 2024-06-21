@@ -38,6 +38,14 @@ def generate_data(n_samples):
 
     """ Start of your code
     """
+
+    def set_seed(seed):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+    # Set the seed
+    set_seed(321354645)
+
     K = 3
     a = np.array([1/3, 1/3, 1/3])
     mu = np.array([[1,1], [3,1], [2,3]]) # this is not mu, because apparently mu has already been defined (line 32)
@@ -304,9 +312,9 @@ def dsm(x, params):
         # Compute gradients
         Gx, Gy = np.gradient(Z, x1, y1)
         magnitude = np.hypot(Gx, Gy)
-        ax5[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=arrowscales[nl], cmap='viridis')
+        ax5[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=100, cmap='viridis')
 
-
+    Net = classifier_net
     """ End of your code
     """
 
@@ -341,7 +349,18 @@ def sampling(Net, sigmas_all, n_samples):
     """ Start of your code
     """
 
+    x = torch.zeros(n_samples, 2)
+    for i in range(len(sigmas_all) - 1, -1, -1):
+        sigma = sigmas_all[i]
+        alpha_i = 0.02 * (sigma ** 2) / (sigmas_all[0] ** 2)
+        for t in range(100):
+            z = torch.randn_like(x)
+            input_data = torch.cat((x, sigma.repeat(n_samples, 1)), dim=1)
+            x = x - (alpha_i / 2) * Net(input_data).detach() + torch.sqrt(alpha_i) * z
 
+    samples = x.detach().cpu().numpy()
+    ax6[1].hist2d(samples[:, 0], samples[:, 1], bins=128, cmap='viridis')
+    ax6[0].hist2d(x[:, 0].cpu().numpy(), x[:, 1].cpu().numpy(), bins=128, cmap='viridis')
 
     """ End of your code
     """
@@ -357,13 +376,15 @@ if __name__ == '__main__':
     # denoising score matching
     Net, sigmas_all, figs = dsm(x=x, params=params)
 
+
     # sampling
-    fig6 = sampling(Net=Net, sigmas_all=sigmas_all, n_samples=5000)
+    # fig6 = sampling(Net=Net, sigmas_all=sigmas_all, n_samples=5000)
 
     pdf.savefig(fig1)
     for f in figs:
         pdf.savefig(f)
-    pdf.savefig(fig6)
+
+    # pdf.savefig(fig6)
 
     pdf.close()
 
