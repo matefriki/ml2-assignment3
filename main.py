@@ -348,19 +348,42 @@ def sampling(Net, sigmas_all, n_samples):
 
     """ Start of your code
     """
+    epsilon = 0.01
+    T = 10
+    space_dimension = x.shape[1]
 
-    x = torch.zeros(n_samples, 2)
-    for i in range(len(sigmas_all) - 1, -1, -1):
-        sigma = sigmas_all[i]
-        alpha_i = 0.02 * (sigma ** 2) / (sigmas_all[0] ** 2)
-        for t in range(100):
-            z = torch.randn_like(x)
-            input_data = torch.cat((x, sigma.repeat(n_samples, 1)), dim=1)
-            x = x - (alpha_i / 2) * Net(input_data).detach() + torch.sqrt(alpha_i) * z
 
-    samples = x.detach().cpu().numpy()
-    ax6[1].hist2d(samples[:, 0], samples[:, 1], bins=128, cmap='viridis')
-    ax6[0].hist2d(x[:, 0].cpu().numpy(), x[:, 1].cpu().numpy(), bins=128, cmap='viridis')
+    # Initialize device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    Net.to(device)
+    Net.eval()
+
+    x_samples = torch.randn(n_samples, space_dimension, device=device).float()
+
+    sigmas_all = sigmas_all.to(device).float()
+    for sigma in reversed(sigmas_all):
+        sigma = sigma.float()
+        alpha_i = epsilon * (sigma ** 2) / (sigmas_all[0] ** 2)
+        for t in range(T):
+            x_samples.requires_grad_(True)
+            sigma_expanded = sigma.repeat(n_samples, 1).float()
+
+            z_t = torch.randn(n_samples, space_dimension, device=device).float()
+
+            # Step
+            score = Net(torch.cat([x_samples, sigma_expanded], dim=1))
+            grad = torch.autograd.grad(score.sum(), x_samples, create_graph=True)[0]
+            x_samples = x_samples.detach() + 0.5 * alpha_i * grad + torch.sqrt(alpha_i) * z_t
+
+            # Memory management
+            x_samples = x_samples.detach()
+            del z_t, sigma_expanded, score, grad
+            if device == torch.device('cuda'):
+                torch.cuda.empty_cache()
+    x_samples = x_samples.cpu().numpy()
+
+    ax6[0].hist2d(x[:, 0], x[:, 1], bins=128, cmap='viridis')
+    ax6[1].hist2d(x_samples[:, 0], x_samples[:, 1], bins=128, cmap='viridis')
 
     """ End of your code
     """
@@ -378,13 +401,13 @@ if __name__ == '__main__':
 
 
     # sampling
-    # fig6 = sampling(Net=Net, sigmas_all=sigmas_all, n_samples=5000)
+    fig6 = sampling(Net=Net, sigmas_all=sigmas_all, n_samples=5000)
 
     pdf.savefig(fig1)
     for f in figs:
         pdf.savefig(f)
 
-    # pdf.savefig(fig6)
+    pdf.savefig(fig6)
 
     pdf.close()
 
