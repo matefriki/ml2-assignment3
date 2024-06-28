@@ -124,7 +124,10 @@ def dsm(x, params):
 
     Net = None # TODO: replace with torch.nn module
     sigmas_all = get_sigmas(sigma_1, sigma_L, L) # DONE: replace with the L noise levels
-    print(sigmas_all)
+    print("Sigmas: ", sigmas_all)
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("Device: ", device)
 
     # TASK 3.1
     x_bar = torch.zeros((L, n_samples, space_dimension))
@@ -137,7 +140,7 @@ def dsm(x, params):
     ax2[2].hist2d(x_bar[-1].cpu().numpy()[:,0],x_bar[-1].cpu().numpy()[:,1],128)
     # ax2[2].set_xlim(xlim1)
     # ax2[2].set_ylim(ylim1)
-    print(x_bar.shape)
+    # print(x_bar.shape)
 
     # TASK 3.2
 
@@ -172,7 +175,7 @@ def dsm(x, params):
     # Reshape x_fin to have shape [50000, 3]
     x_bar_reshaped = x_bar_reshaped.view(-1, space_dimension+1).float()
     # x_bar_reshaped.requires_grad_(True)
-    print(x_bar_reshaped.shape)  # This should print torch.Size([50000, 3])
+    # print(x_bar_reshaped.shape)  # This should print torch.Size([50000, 3])
 
     class DSMLoss(torch.nn.Module):
         def __init__(self):
@@ -201,7 +204,7 @@ def dsm(x, params):
                 if param.requires_grad:
                     print(name, param.data)
 
-    n_epochs = 85
+    n_epochs = 100
     optimizer = optim.Adam(classifier_net.parameters(), lr=.001, weight_decay=1e-4)
 
     # criterion = nn.MSELoss()
@@ -244,6 +247,9 @@ def dsm(x, params):
         for i in range(len(mu)):
             res += pi[i] * (1/(2 * np.pi * np.sqrt(sigma))) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * sigma))
         return res
+    
+    def get_arrow_scale(magnitude, scale_factor=15):
+        return np.max(magnitude)*scale_factor
 
     xlim1 = np.array(ax2[1].get_xlim())
     ylim1 = np.array(ax2[1].get_ylim())
@@ -255,8 +261,8 @@ def dsm(x, params):
     ylims = [ylim1, (ylim1 + ylimL)/2, ylimL]
     xticks = [np.linspace(lim[0], lim[1], num=5) for lim in xlims]
     yticks = [np.linspace(lim[0], lim[1], num=5) for lim in ylims]
-    noiselevels = [sigma_1,sigmas_all[int(L/2)],sigma_L] # DONE: replace these with the chosen noise levels for plotting the density/scores
-    arrowscales = [60,15,5]
+    noiselevels = [sigma_1,sigmas_all[int(L/3)],sigma_L] # DONE: replace these with the chosen noise levels for plotting the density/scores
+    
 
     for nl in range(3):
 
@@ -280,7 +286,8 @@ def dsm(x, params):
         # Compute gradients
         Gx, Gy = np.gradient(Z, x1, y1)
         magnitude = np.hypot(Gx, Gy)
-        ax4[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=arrowscales[nl], cmap='viridis')
+        scale = get_arrow_scale(magnitude)
+        ax4[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=scale, cmap='viridis')
 
 
    # TASK 3.5
@@ -290,6 +297,7 @@ def dsm(x, params):
         res = energy_net.forward(x_tens)
         return res
 
+    arrowscales = [500,300,200]
     for nl in range(3):
 
         x1 = np.linspace(xlims[nl][0], xlims[nl][1], num=32)
@@ -312,7 +320,8 @@ def dsm(x, params):
         # Compute gradients
         Gx, Gy = np.gradient(Z, x1, y1)
         magnitude = np.hypot(Gx, Gy)
-        ax5[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=100, cmap='viridis')
+        scale = get_arrow_scale(magnitude)
+        ax5[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=scale, cmap='viridis')
 
     Net = classifier_net
     """ End of your code
@@ -355,6 +364,7 @@ def sampling(Net, sigmas_all, n_samples):
 
     # Initialize device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     Net.to(device)
     Net.eval()
 
@@ -380,7 +390,7 @@ def sampling(Net, sigmas_all, n_samples):
             del z_t, sigma_expanded, score, grad
             if device == torch.device('cuda'):
                 torch.cuda.empty_cache()
-    x_samples = x_samples.to(device).numpy()
+    x_samples = x_samples.cpu().numpy()
     x_np = x.numpy()
 
     ax6[0].hist2d(x_np[:, 0], x_np[:, 1], bins=128, cmap='viridis')
