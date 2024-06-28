@@ -163,7 +163,7 @@ def dsm(x, params):
     def count_parameters(net):
         return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
-    classifier_net = SimpleMLP(input_size=3,hidden_size=128,output_size=1).to("cpu")
+    classifier_net = SimpleMLP(input_size=3,hidden_size=64,output_size=1).to(device)
     print('Learnable params=%i' %count_parameters(classifier_net))
 
     # TASK 3.3
@@ -183,7 +183,7 @@ def dsm(x, params):
 
         def forward(self, x_bar, x_original, sigma, gradients):
             # Calculate the analytical gradient of the log probability
-            analytical_grad = -1 * (x_bar - x_original) / sigma**2
+            analytical_grad = -1 * (x_bar - x_original) / (sigma**2)
             # Calculate the loss
             loss = torch.mean(sigma**2 * torch.sum((analytical_grad - gradients) ** 2, dim=1))
             return loss
@@ -221,13 +221,17 @@ def dsm(x, params):
             noisy_input = (x + sigma*z).float()
             noisy_input.requires_grad_(True)
             noisy_input_reshaped = noisy_shape(noisy_input,sigma)
+            noisy_input_reshaped = noisy_input_reshaped.to(device)
+            noisy_input = noisy_input.to(device)
+
+
 
             predictions = classifier_net.forward(noisy_input_reshaped)
             grad_outputs = torch.ones_like(predictions)
             gradients = torch.autograd.grad(predictions, noisy_input_reshaped, grad_outputs, create_graph=True)[0][:,:-1]
             # print(gradients)
             # print(gradients.shape)
-            loss = loss_function(noisy_input, x, sigma, gradients)
+            loss = loss_function(noisy_input, x.to(device), sigma, gradients)
             optimizer.zero_grad()
             loss.backward(retain_graph=True)
             # print("Gradient of first layer weights after backward: ", classifier_net.W1.weight.grad)
@@ -237,7 +241,8 @@ def dsm(x, params):
 
     # print_parameters(classifier_net)
 
-    ax3.plot(np.asarray(loss_all)) # TODO: maybe, plot log loss instead of loss
+    ax3.plot(np.log(np.asarray(loss_all))
+             ) # TODO: maybe, plot log loss instead of loss
 
     # TASK 3.4
 
@@ -245,7 +250,7 @@ def dsm(x, params):
     def gmm_pdf(mu, sigma, pi, x):
         res = 0.0
         for i in range(len(mu)):
-            res += pi[i] * (1/(2 * np.pi * np.sqrt(sigma))) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * sigma))
+            res += pi[i] * (1/(2 * np.pi * sigma)) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * sigma))
         return res
     
     def get_arrow_scale(magnitude, scale_factor=15):
@@ -293,7 +298,7 @@ def dsm(x, params):
    # TASK 3.5
    # Energy_function
     def energy_pdf(energy_net, sigma, x):
-        x_tens = torch.tensor([x[0], x[1], sigma]).float()
+        x_tens = torch.tensor([x[0], x[1], sigma]).float().to(device)
         res = energy_net.forward(x_tens)
         return res
 
