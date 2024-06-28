@@ -380,9 +380,10 @@ def sampling(Net, sigmas_all, n_samples):
             del z_t, sigma_expanded, score, grad
             if device == torch.device('cuda'):
                 torch.cuda.empty_cache()
-    x_samples = x_samples.cpu().numpy()
+    x_samples = x_samples.to(device).numpy()
+    x_np = x.numpy()
 
-    ax6[0].hist2d(x[:, 0], x[:, 1], bins=128, cmap='viridis')
+    ax6[0].hist2d(x_np[:, 0], x_np[:, 1], bins=128, cmap='viridis')
     ax6[1].hist2d(x_samples[:, 0], x_samples[:, 1], bins=128, cmap='viridis')
 
     """ End of your code
