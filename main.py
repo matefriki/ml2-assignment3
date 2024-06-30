@@ -48,19 +48,19 @@ def generate_data(n_samples):
 
     K = 3
     a = np.array([1/3, 1/3, 1/3])
-    mu = np.array([[1,1], [3,1], [2,3]]) # this is not mu, because apparently mu has already been defined (line 32)
+    mu = np.array([[1,1], [3,1], [2,3]]) 
     mu = mu/4
     sig = np.array([0.01*np.eye(2) for k in range(K)])
     to_sample = np.array(np.floor(n_samples*a), dtype=np.int32)
     to_sample[-1] = n_samples - np.sum(to_sample[:-1])
 
     # we can use the same decomposition for sampling because all components have the same covariance
-    L = np.linalg.cholesky(sig[0] + 1e-6 * np.eye(sig[0].shape[0]))
+    chol = np.linalg.cholesky(sig[0] + 1e-6 * np.eye(sig[0].shape[0]))
     idx = 0
     x_np = np.zeros((n_samples, 2))
     for k in range(K):
         z = np.random.normal(size=(to_sample[k], mu[0].shape[0], 1))
-        x_np[idx:idx + to_sample[k]] = mu[k] + np.matmul(L, z).reshape(to_sample[k], mu[0].shape[0])
+        x_np[idx:idx + to_sample[k]] = mu[k] + np.matmul(chol, z).reshape(to_sample[k], mu[0].shape[0])
         idx += to_sample[k]
 
     x = torch.from_numpy(x_np)
@@ -118,9 +118,9 @@ def dsm(x, params):
     """
     n_samples = x.shape[0]
     space_dimension = x.shape[1]
-    sigma_1 = 0.01
-    sigma_L = 0.4 # 0.3
-    L = 30
+    sigma_1 = 0.05
+    sigma_L = 0.5 # 0.3
+    L = 15
 
     Net = None # TODO: replace with torch.nn module
     sigmas_all = get_sigmas(sigma_1, sigma_L, L) # DONE: replace with the L noise levels
@@ -163,8 +163,8 @@ def dsm(x, params):
     def count_parameters(net):
         return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
-    classifier_net = SimpleMLP(input_size=3,hidden_size=64,output_size=1).to(device)
-    print('Learnable params=%i' %count_parameters(classifier_net))
+    energy_model_net = SimpleMLP(input_size=3,hidden_size=64,output_size=1).to(device)
+    print('Learnable params=%i' %count_parameters(energy_model_net))
 
     # TASK 3.3
 
@@ -183,7 +183,7 @@ def dsm(x, params):
 
         def forward(self, x_bar, x_original, sigma, gradients):
             # Calculate the analytical gradient of the log probability
-            analytical_grad = -1 * (x_bar - x_original) / (sigma**2)
+            analytical_grad = (x_bar - x_original) / (sigma**2)
             # Calculate the loss
             loss = torch.mean(sigma**2 * torch.sum((analytical_grad - gradients) ** 2, dim=1))
             return loss
@@ -204,8 +204,8 @@ def dsm(x, params):
                 if param.requires_grad:
                     print(name, param.data)
 
-    n_epochs = 100
-    optimizer = optim.Adam(classifier_net.parameters(), lr=.001, weight_decay=1e-4)
+    n_epochs = 125
+    optimizer = optim.Adam(energy_model_net.parameters(), lr=.001, weight_decay=1e-4)
 
     # criterion = nn.MSELoss()
     loss_function = DSMLoss()
@@ -226,7 +226,7 @@ def dsm(x, params):
 
 
 
-            predictions = classifier_net.forward(noisy_input_reshaped)
+            predictions = energy_model_net.forward(noisy_input_reshaped)
             grad_outputs = torch.ones_like(predictions)
             gradients = torch.autograd.grad(predictions, noisy_input_reshaped, grad_outputs, create_graph=True)[0][:,:-1]
             # print(gradients)
@@ -249,9 +249,34 @@ def dsm(x, params):
     # Define the Gaussian Mixture Model PDF function
     def gmm_pdf(mu, sigma, pi, x):
         res = 0.0
-        for i in range(len(mu)):
-            res += pi[i] * (1/(2 * np.pi * sigma)) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * sigma))
+        for i in range(len(pi)):
+            res += pi[i] * (1/(2 * np.pi * (sigma**2))) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * (sigma**2)))
         return res
+    
+    def gmm_score_unit(mu, sigma, pi, x):
+        px = gmm_pdf(mu, sigma, pi, x)
+        G = np.zeros_like(x)
+        # print("x:", x)
+        # print("Initial G:", G)
+        for i in range(len(pi)):
+            factor = (pi[i] / (2 * np.pi * (sigma**4))) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * (sigma**2)))
+            vector = x - mu[i]
+            # print(type(pi[i]), type(sigma), type(x), type(mu[i]))
+            # print(f"Iteration {i}: factor:", factor)
+            # print(f"Iteration {i}: vector:", vector)
+            G = G + factor * vector
+        G = G / px
+        # print("Final G:", G)
+        return G[0], G[1]
+
+    def gmm_score_all(mu, sigma, pi, X, Y):
+        Gx = np.zeros([len(X), len(Y)])
+        Gy = np.zeros([len(X), len(Y)])
+        for i in range(len(X)):
+            for j in range(len(Y)):
+                x = np.array([X[i], Y[j]])
+                Gx[i, j], Gy[i, j] = gmm_score_unit(mu, sigma, pi, x)
+        return Gx, Gy
     
     def get_arrow_scale(magnitude, scale_factor=15):
         return np.max(magnitude)*scale_factor
@@ -259,14 +284,29 @@ def dsm(x, params):
     xlim1 = np.array(ax2[1].get_xlim())
     ylim1 = np.array(ax2[1].get_ylim())
 
+    xlima = np.array(ax2[1].get_xlim())
+    ylima = np.array(ax2[1].get_ylim())
+
+    xlima[0] -= 0.25*(xlima[1]-xlima[0])
+    xlima[1] += 0.25*(xlima[1]-xlima[0])
+    ylima[0] -= 0.25*(ylima[1]-ylima[0])
+    ylima[1] += 0.25*(ylima[1]-ylima[0])
+
     xlimL = np.array(ax2[2].get_xlim())
     ylimL = np.array(ax2[2].get_ylim())
 
-    xlims = [xlim1, (xlim1 + xlimL)/2, xlimL]
+    xlims = [xlim1, (xlim1 + xlimL)/2, xlimL] # this would be adaptative, but looks weird without the ticks, that are disabled by the tutors
     ylims = [ylim1, (ylim1 + ylimL)/2, ylimL]
+    xlims = [xlim1, xlim1, xlim1]
+    ylims = [ylim1, ylim1, ylim1]
+    # xlims = xlim1*1.5*np.ones([3,2])
+    # ylims = ylim1*1.5*np.ones([3,2])
+    xlims = [xlima for k in range(3)]
+    ylims = [ylima for k in range(3)]
+
     xticks = [np.linspace(lim[0], lim[1], num=5) for lim in xlims]
     yticks = [np.linspace(lim[0], lim[1], num=5) for lim in ylims]
-    noiselevels = [sigma_1,sigmas_all[int(L/3)],sigma_L] # DONE: replace these with the chosen noise levels for plotting the density/scores
+    noiselevels = [sigma_1,sigmas_all.numpy()[int(L/2)],sigma_L] # DONE: replace these with the chosen noise levels for plotting the density/scores
     
 
     for nl in range(3):
@@ -278,9 +318,10 @@ def dsm(x, params):
         Z = np.zeros_like(X)
 
         # Calculate the GMM PDF for each point in the meshgrid
+        # print(type(mu), type(a))
         for i in range(X.shape[0]):
             for j in range(X.shape[1]):
-                Z[i, j] = gmm_pdf(mu, 0.01 + noiselevels[nl], a, np.array([X[i, j], Y[i, j]]))
+                Z[i, j] = gmm_pdf(mu, np.sqrt(0.01 + noiselevels[nl]**2), a, np.array([X[i, j], Y[i, j]]))
 
         ax4[0,nl].contourf(X, Y, Z, levels=50, cmap='viridis')
         ax4[0, nl].set_xticks(xticks[nl]) # TODO: for some reason, the ticks are not working
@@ -288,12 +329,16 @@ def dsm(x, params):
         ax4[0, nl].set_xlim(xlims[nl])
         ax4[0, nl].set_ylim(ylims[nl])
 
-        # Compute gradients
-        Gx, Gy = np.gradient(Z, x1, y1)
+        # Compute gradients: numerical version, for the sake of completeness
+        # Gx, Gy = np.gradient(Z, x1, y1)
+        # print("An shapes: ", np.shape(Gxan), np.shape(Gyan))
+        # Compute gradients: analytical version
+        # print(type(mu), type(a))
+        Gx, Gy = gmm_score_all(mu, np.sqrt(0.01+noiselevels[nl]**2), a, x1, y1)
         magnitude = np.hypot(Gx, Gy)
         scale = get_arrow_scale(magnitude)
-        ax4[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=scale, cmap='viridis')
 
+        ax4[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=scale, cmap='viridis')
 
    # TASK 3.5
    # Energy_function
@@ -302,7 +347,6 @@ def dsm(x, params):
         res = energy_net.forward(x_tens)
         return res
 
-    arrowscales = [500,300,200]
     for nl in range(3):
 
         x1 = np.linspace(xlims[nl][0], xlims[nl][1], num=32)
@@ -314,7 +358,8 @@ def dsm(x, params):
         # Calculate the GMM PDF for each point in the meshgrid
         for i in range(X.shape[0]):
             for j in range(X.shape[1]):
-                Z[i, j] = energy_pdf(classifier_net, noiselevels[nl], np.array([X[i, j], Y[i, j]]))
+                # Z[i, j] = energy_pdf(energy_model_net, noiselevels[nl], np.array([X[i, j], Y[i, j]]))
+                Z[i, j] = np.exp(-energy_pdf(energy_model_net, noiselevels[nl], np.array([X[i, j], Y[i, j]])).detach().cpu().numpy())
 
         ax5[0,nl].contourf(X, Y, Z, levels=50, cmap='viridis')
         ax5[0, nl].set_xticks(xticks[nl]) # TODO: for some reason, the ticks are not working
@@ -328,7 +373,7 @@ def dsm(x, params):
         scale = get_arrow_scale(magnitude)
         ax5[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=scale, cmap='viridis')
 
-    Net = classifier_net
+    Net = energy_model_net
     """ End of your code
     """
 
@@ -362,8 +407,8 @@ def sampling(Net, sigmas_all, n_samples):
 
     """ Start of your code
     """
-    epsilon = 0.01
-    T = 10
+    epsilon = 5e-3
+    T = 100
     space_dimension = x.shape[1]
 
 
@@ -386,13 +431,13 @@ def sampling(Net, sigmas_all, n_samples):
             z_t = torch.randn(n_samples, space_dimension, device=device).float()
 
             # Step
-            score = Net(torch.cat([x_samples, sigma_expanded], dim=1))
-            grad = torch.autograd.grad(score.sum(), x_samples, create_graph=True)[0]
+            energy = -Net(torch.cat([x_samples, sigma_expanded], dim=1))
+            grad = torch.autograd.grad(energy.sum(), x_samples, create_graph=True)[0]
             x_samples = x_samples.detach() + 0.5 * alpha_i * grad + torch.sqrt(alpha_i) * z_t
 
             # Memory management
             x_samples = x_samples.detach()
-            del z_t, sigma_expanded, score, grad
+            del z_t, sigma_expanded, energy, grad
             if device == torch.device('cuda'):
                 torch.cuda.empty_cache()
     x_samples = x_samples.cpu().numpy()
