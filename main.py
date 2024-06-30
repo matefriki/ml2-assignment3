@@ -17,7 +17,7 @@ import torch.optim as optim
 
 from matplotlib.backends.backend_pdf import PdfPages
 
-import tqdm
+# import tqdm
 
 def get_sigmas(sigma_1, sigma_L, L):
     # geometric progression for noise levels from \sigma_1 to \sigma_L 
@@ -44,7 +44,7 @@ def generate_data(n_samples):
         np.random.seed(seed)
 
     # Set the seed
-    set_seed(321354645)
+    set_seed(42)
 
     K = 3
     a = np.array([1/3, 1/3, 1/3])
@@ -116,6 +116,7 @@ def dsm(x, params):
 
     """ Start of your code
     """
+    
     n_samples = x.shape[0]
     space_dimension = x.shape[1]
     sigma_1 = 0.05
@@ -213,7 +214,8 @@ def dsm(x, params):
 
     # print_parameters(classifier_net)
 
-    for epoch in tqdm.tqdm(range(n_epochs)):
+    # for epoch in tqdm.tqdm(range(n_epochs)): # tqdm version, to see progress
+    for epoch in range(n_epochs):
         running_loss = 0.0
         for l in np.random.permutation(range(L)):
             sigma = sigmas_all[l]
@@ -259,22 +261,25 @@ def dsm(x, params):
         # print("x:", x)
         # print("Initial G:", G)
         for i in range(len(pi)):
-            factor = (pi[i] / (2 * np.pi * (sigma**4))) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * (sigma**2)))
+            factor = (pi[i] / (2 * np.pi * (sigma**2))) * np.exp(-np.linalg.norm(x - mu[i])**2 / (2 * (sigma**2)))
+            # print(factor)
             vector = x - mu[i]
             # print(type(pi[i]), type(sigma), type(x), type(mu[i]))
             # print(f"Iteration {i}: factor:", factor)
             # print(f"Iteration {i}: vector:", vector)
             G = G + factor * vector
-        G = G / px
+        # print(G)
+        # print(px*(sigma**2))
+        G = -G / ((px*(sigma**2)))
         # print("Final G:", G)
-        return G[0], G[1]
+        return G[1], G[0]
 
     def gmm_score_all(mu, sigma, pi, X, Y):
-        Gx = np.zeros([len(X), len(Y)])
-        Gy = np.zeros([len(X), len(Y)])
-        for i in range(len(X)):
-            for j in range(len(Y)):
-                x = np.array([X[i], Y[j]])
+        Gx = np.zeros_like(X)
+        Gy = np.zeros_like(X)
+        for i in range(X.shape[0]):
+            for j in range(X.shape[1]):
+                x = np.array([X[i, j], Y[i, j]])
                 Gx[i, j], Gy[i, j] = gmm_score_unit(mu, sigma, pi, x)
         return Gx, Gy
     
@@ -329,15 +334,35 @@ def dsm(x, params):
         ax4[0, nl].set_xlim(xlims[nl])
         ax4[0, nl].set_ylim(ylims[nl])
 
-        # Compute gradients: numerical version, for the sake of completeness
-        # Gx, Gy = np.gradient(Z, x1, y1)
-        # print("An shapes: ", np.shape(Gxan), np.shape(Gyan))
+        
         # Compute gradients: analytical version
         # print(type(mu), type(a))
-        Gx, Gy = gmm_score_all(mu, np.sqrt(0.01+noiselevels[nl]**2), a, x1, y1)
+        Gx, Gy = gmm_score_all(mu, np.sqrt(0.01+noiselevels[nl]**2), a, X, Y)
         magnitude = np.hypot(Gx, Gy)
         scale = get_arrow_scale(magnitude)
 
+        # # For debugging purposes:
+        # # Compute gradients: numerical version, for the sake of completeness
+        # Gx_num, Gy_num = np.gradient(np.log(Z), x1, y1)
+        # magnitude_num = np.hypot(Gx_num, Gy_num)
+        # scale_num = get_arrow_scale(magnitude_num)
+        # # Check difference between numerical and analytical
+        # print("Numerical Grads:\n")
+        # # print("x, y, f, g") 
+        # print(f"Max magitude num: {np.max(magnitude_num):.5f}, analytic: {np.max(magnitude):.5f}")       
+        # print(f"Argmax num: {np.argmax(magnitude_num)}, anal: {np.argmax(magnitude)}")
+        # for i in range(X.shape[0]):
+        #     for j in range(X.shape[1]):
+        #         diff = np.abs(magnitude_num[i,j] - magnitude[i,j])
+        #         ratio = magnitude_num[i,j]/magnitude[i,j]
+        #         if ratio < 4/5 or ratio > 5/4:                          
+        #            print(f"{X[i,j]:.8f}, {Y[i,j]:.8f}, {ratio:.8f}, {diff:.8f}, {magnitude_num[i,j]:.8f}, {magnitude[i,j]:.8f}")
+        #         if ratio > 9/10 and ratio < 10/9:
+        #             print(f"{X[i,j]:.3f}, {Y[i,j]:.3f}, Anal: {Gx[i,j]:.3f}, {Gy[i,j]:.3f}, Num: {Gx_num[i,j]:.3f}, {Gy_num[i,j]:.3f}")
+        # print("Done with numerical grads \n\n")
+
+        
+        # ax4[1,nl].quiver(X, Y, Gx_num, Gy_num, magnitude_num, angles = 'uv', scale=scale_num, cmap='viridis')
         ax4[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=scale, cmap='viridis')
 
    # TASK 3.5
@@ -354,12 +379,14 @@ def dsm(x, params):
 
         X, Y = np.meshgrid(x1, y1)
         Z = np.zeros_like(X)
+        logZ = np.zeros_like(X)
 
         # Calculate the GMM PDF for each point in the meshgrid
         for i in range(X.shape[0]):
             for j in range(X.shape[1]):
-                # Z[i, j] = energy_pdf(energy_model_net, noiselevels[nl], np.array([X[i, j], Y[i, j]]))
-                Z[i, j] = np.exp(-energy_pdf(energy_model_net, noiselevels[nl], np.array([X[i, j], Y[i, j]])).detach().cpu().numpy())
+                energ = energy_pdf(energy_model_net, noiselevels[nl], np.array([X[i, j], Y[i, j]])).detach().cpu().numpy()
+                Z[i, j] = np.exp(-energ)
+                logZ[i,j] = -energ
 
         ax5[0,nl].contourf(X, Y, Z, levels=50, cmap='viridis')
         ax5[0, nl].set_xticks(xticks[nl]) # TODO: for some reason, the ticks are not working
@@ -368,7 +395,7 @@ def dsm(x, params):
         ax5[0, nl].set_ylim(ylims[nl])
 
         # Compute gradients
-        Gx, Gy = np.gradient(Z, x1, y1)
+        Gx, Gy = np.gradient(logZ, x1, y1)
         magnitude = np.hypot(Gx, Gy)
         scale = get_arrow_scale(magnitude)
         ax5[1,nl].quiver(X, Y, Gx, Gy, magnitude, angles = 'uv', scale=scale, cmap='viridis')
